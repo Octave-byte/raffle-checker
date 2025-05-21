@@ -2,56 +2,45 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Define the campaign mapping
-CAMPAIGN_MAPPING = {
-    "Monadverse Whitelist Raffle": "1",
-    "Wandering Whales Shark Raffle": "2",
-    "Pudgy Penguins - Rootstock": "3",
-    "Giza": "4",
-}
 
 # API configuration
 url = "https://api.dune.com/api/v1/query/4786858/results"
 headers = {
     "X-DUNE-API-KEY": st.secrets["auth_token"]
 }
-def check_address_for_raffle(address, raffle):
-    address = address.lower()  # Convert address to lowercase
-    params = {
-        "filters": f"address = '{address}' AND campaign_id = '{raffle}'",
-        "columns": "address,cat"
-    }
-    response = requests.request("GET", url, headers=headers, params=params)
-    data = response.json()
-    df = pd.DataFrame(data['result']['rows'])
-    
-    result = {"address": None, "participant": 0, "winner": 0}
-    
-    if not df.empty:
-        address = df["address"].iloc[0]
-        result["address"] = address
-        result["participant"] = int("participant" in df["cat"].values)
-        result["winner"] = int("winner" in df["cat"].values)
-    
-    return result
 
-# Streamlit UI
-st.title("Jumper Raffle Participation and Winner Checker")
 
-# User inputs
-address = st.text_input("Enter your wallet address:")
-campaign_name = st.selectbox("Select a campaign:", list(CAMPAIGN_MAPPING.keys()))
-
-if st.button("Check Participation"):
-    if not address:
-        st.error("Please enter your wallet address.")
+@st.cache_data(ttl=604800)  # Cache for one week (7 days * 24 * 60 * 60)
+def fetch_prize_data():
+    url = "https://api.dune.com/api/v1/query/4786858/results"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        rows = data['result']['rows']
+        return pd.DataFrame(rows)
     else:
-        campaign_id = CAMPAIGN_MAPPING[campaign_name]
-        result = check_address_for_raffle(address, campaign_id)
-        
-        if result["address"]:
-            st.success(f"Results for {result['address']}")
-            st.write(f"**Participating:** {'✅' if result['participant'] else '❌'}")
-            st.write(f"**Winning:** {'✅' if result['winner'] else '❌'}")
+        st.error("Failed to fetch data from the prize API.")
+        return pd.DataFrame()
+
+# UI
+st.title("🏆 Jumper Raffles and Airdrop Finder")
+st.markdown("Enter your address below to check if you've won any prizes!")
+
+user_address = st.text_input("Your wallet address (0x...)", max_chars=42).strip().lower()
+
+if st.button("Search for airdrops"):
+    if not user_address.startswith("0x") or len(user_address) != 42:
+        st.warning("Please enter a valid Ethereum address.")
+    else:
+        df = fetch_prize_data()
+
+        # Normalize address casing for matching
+        df['address'] = df['address'].str.lower()
+
+        user_prizes = df[df['address'] == user_address]
+
+        if not user_prizes.empty:
+            st.success(f"🎉 You have won {len(user_prizes)} prize(s)!")
+            st.dataframe(user_prizes[['campaign_name', 'token_name', 'amount']])
         else:
-            st.warning("No participation found for this address in the selected campaign.")
+            st.info("🔎 No prizes found yet. Keep digging for opportunities on Jumper!")
